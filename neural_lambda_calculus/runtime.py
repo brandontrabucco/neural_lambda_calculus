@@ -43,17 +43,19 @@ class Runtime(module.Module):
         all_probs = tf.concat([all_probs, tf.expand_dims(action_probs, 1)], 1)
         # Take the left and right seeds and evaluate them
         left, right = tf.split(rest, 2, axis=1)
+        if current_depth > self.maximum_depth:
+            return right, tf.concat([all_probs, tf.expand_dims(condition, 1)], 1)
         left_result, left_probs = self.execute_program(left, environment, all_probs, current_depth + 1)
         right_result, right_probs = self.execute_program(right, environment, all_probs, current_depth + 1)
         # Compute additional probabilities from left and right subtrees
         residual_left_probs = left_probs[:, tf.shape(all_probs)[1]:]
         residual_right_probs = right_probs[:, tf.shape(all_probs)[1]:]
-        padded_probs = tf.pad(all_probs, [[0, 0], [0, 
-            tf.shape(residual_left_probs)[1] + tf.shape(residual_right_probs)[1]]])
         joined_probs = tf.concat([all_probs, residual_left_probs, residual_right_probs], 1)
         # Compute the evaluation of program left on right
         joined_result, joined_probs = self.execute_program(left_result,
             tf.concat([tf.expand_dims(right_result, 1), environment], 1), joined_probs, current_depth + 1)
+        padded_probs = tf.pad(all_probs, [[0, 0], [0, 
+            tf.shape(joined_probs)[1] - tf.shape(all_probs)[1]]])
         # Merge the results according to the mask
         next_seed = tf.where(mask, right, joined_result)
         next_probs = tf.where(mask, padded_probs, joined_probs)
