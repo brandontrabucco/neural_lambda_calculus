@@ -15,9 +15,10 @@ class HyperNetwork(module.Module):
         self.output_shapes = output_shapes
     
     def __call__(self, x):
-        for layer, norm in zip(self.hidden_layers, self.norm_layers):
-            x = norm(tf.nn.relu(layer(x)))
-        return [tf.reshape(layer(x), shape) for layer, shape in zip(self.output_layers, self.output_shapes)]
+        for i, (layer, norm) in enumerate(list(zip(self.hidden_layers, self.norm_layers))):
+            x = norm(tf.nn.relu(layer(x))) + (0 if i == 0 else x)
+        return [tf.reshape(layer(x), [tf.shape(x)[0]] + list(shape)) for layer, shape in zip(
+            self.output_layers, self.output_shapes)]
         
     def trainable_variables(self):
         module_variables = []

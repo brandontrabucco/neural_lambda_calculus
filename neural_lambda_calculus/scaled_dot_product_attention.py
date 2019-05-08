@@ -13,8 +13,8 @@ class ScaledDotProductAttention(module.Module):
         self.hidden_size = hidden_size
     
     def __call__(self, queries, keys, values, Q_w, K_w, V_w, S_w):
-        batch_size, num_queries, sequence_length = tf.shape(queries)[0], 
-            tf.shape(queries)[1], tf.shape(values)[1]
+        batch_size, num_queries, sequence_length = (tf.shape(queries)[0], 
+            tf.shape(queries)[1], tf.shape(values)[1])
         triangular = tf.matrix_band_part(tf.ones([batch_size, self.num_heads, 
             num_queries, sequence_length]), 0, -1)
         Q, K, V = dense.dense(queries, Q_w), dense.dense(keys, K_w), dense.dense(values, V_w)

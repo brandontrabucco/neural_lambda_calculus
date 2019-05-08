@@ -15,10 +15,10 @@ class Transformer(module.Module):
     
     def __call__(self, x, Q_ws, K_ws, V_ws, S_ws, H_ws, H_bs, F_ws, F_bs, G_w, G_b):
         for (layer, Q_w, K_w, V_w, S_w, H_w, H_b, F_w, F_b) in zip(
-                self.attention_layers, self.fc_hidden_layers, self.fc_output_layers):
+                self.attention_layers, Q_ws, K_ws, V_ws, S_ws, H_ws, H_bs, F_ws, F_bs):
             x = dense.dense(tf.nn.relu(dense.dense(
                 layer(x, x, x, Q_w, K_w, V_w, S_w), H_w, H_b)), F_w, F_b)
-        return dense.dense(tf.reduce_mean(x, [1]), G_w, G_b)
+        return tf.squeeze(dense.dense(tf.reduce_mean(x, [1], keep_dims=True), G_w, G_b), 1)
         
     def trainable_variables(self):
         return []
