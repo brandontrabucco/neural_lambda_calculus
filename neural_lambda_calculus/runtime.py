@@ -38,13 +38,14 @@ class Runtime(module.Module):
         condition = tf.sigmoid(condition)
         random_samples = tf.random_uniform([tf.shape(condition)[0]])
         mask = random_samples < condition
-        # Compute the probability of the state we ended up in
-        action_probs = tf.where(mask, condition, 1.0 - condition)
-        all_probs = tf.concat([all_probs, tf.expand_dims(action_probs, 1)], 1)
         # Take the left and right seeds and evaluate them
         left, right = tf.split(rest, 2, axis=1)
         if current_depth > self.maximum_depth:
             return right, tf.concat([all_probs, tf.expand_dims(condition, 1)], 1)
+        # Compute the probability of the state we ended up in
+        action_probs = tf.where(mask, condition, 1.0 - condition)
+        all_probs = tf.concat([all_probs, tf.expand_dims(action_probs, 1)], 1)
+        # Apply these functions to the environment
         left_result, left_probs = self.execute_program(left, environment, all_probs, current_depth + 1)
         right_result, right_probs = self.execute_program(right, environment, all_probs, current_depth + 1)
         # Compute additional probabilities from left and right subtrees
