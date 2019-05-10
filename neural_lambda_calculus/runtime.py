@@ -2,65 +2,51 @@
 
 
 import neural_lambda_calculus.module as module
-import neural_lambda_calculus.hyper_network as hyper_network
 import neural_lambda_calculus.transformer as transformer
 import tensorflow as tf
-import numpy as np
+from collections import defaultdict
 
 
 class Runtime(module.Module):
 
-    def __init__(self, maximum_depth, hidden_size, num_layers, output_shapes, num_heads, hidden_sizes):
-        self.hyper_network = hyper_network.HyperNetwork(hidden_size, num_layers, output_shapes)
-        self.transformer = transformer.Transformer(num_heads, hidden_sizes)
-        self.maximum_depth = maximum_depth
+    def __init__(self, max_call_depth, max_branch_depth, num_heads, attention_hidden_size, 
+            dense_hidden_size, num_layers, hidden_size, output_size):
+        self.transformer = transformer.Transformer(num_heads, attention_hidden_size, 
+            dense_hidden_size, num_layers, hidden_size, output_size)
+        self.max_call_depth = max_call_depth
+        self.max_branch_depth = max_branch_depth
 
-    def build_program(self, seed):
-        model_weights = self.hyper_network(seed)
-        Q_ws, K_ws, V_ws, S_ws = model_weights[0::8], model_weights[1::8], model_weights[2::8], model_weights[3::8]
-        H_ws, H_bs, F_ws, F_bs = model_weights[4::8], model_weights[5::8], model_weights[6::8], model_weights[7::8]
-        G_w, G_b = model_weights[-2], model_weights[-1]
-        return Q_ws, K_ws, V_ws, S_ws, H_ws, H_bs, F_ws, F_bs, G_w, G_b
+    def execute_function(self, seed, environment):
+        result = tf.squeeze(self.transformer(environment, tf.expand_dims(seed, 1)), 1)
+        next_seeds, condition = result[:, 1:], tf.sigmoid(result[:, 0])
+        return (*tf.split(next_seeds, 2, axis=1)), condition, (
+            tf.random_uniform([tf.shape(condition)[0]]) < condition)
 
-    def execute_program(self, seed, environment, all_probs, current_depth):
-        """Performs a step of neural lambda calculus using a seed and environment.
-        Args:
-            seed:           a float32 tensor of shape [batch_size, num_features]
-            environment:    a float32 tensor of shape [batch_size, bank_size, num_features]
-            all_probs:      a float32 tensor of shape [batch_size, num_actions]
-            current_depth:  an int that indicates the current level of recursion
-        Returns: 
-            the resulting next_seed tensor."""
-        # First execute the current program on the environment
-        result = self.transformer(environment, *self.build_program(seed))
-        # Then collect the condition probability
-        condition, rest = result[:, 0], result[:, 1:]
-        condition = tf.sigmoid(condition)
-        random_samples = tf.random_uniform([tf.shape(condition)[0]])
-        mask = random_samples < condition
-        # Take the left and right seeds and evaluate them
-        left, right = tf.split(rest, 2, axis=1)
-        if current_depth > self.maximum_depth:
-            return right, tf.concat([all_probs, tf.expand_dims(condition, 1)], 1)
-        # Compute the probability of the state we ended up in
-        action_probs = tf.where(mask, condition, 1.0 - condition)
-        all_probs = tf.concat([all_probs, tf.expand_dims(action_probs, 1)], 1)
-        # Apply these functions to the environment
-        left_result, left_probs = self.execute_program(left, environment, all_probs, current_depth + 1)
-        right_result, right_probs = self.execute_program(right, environment, all_probs, current_depth + 1)
-        # Compute additional probabilities from left and right subtrees
-        residual_left_probs = left_probs[:, tf.shape(all_probs)[1]:]
-        residual_right_probs = right_probs[:, tf.shape(all_probs)[1]:]
+    def evaluate_symbols(self, left, right, environment, all_probs, call_depth, branch_depth, halt=False):
+        return (*self.execute_program(left, environment, all_probs, call_depth + 1, branch_depth + 1, halt=halt), 
+            *self.execute_program(right, environment, all_probs, call_depth + 1, branch_depth + 1, halt=halt)) 
+
+    def apply_symbols(self, left_result, right_result, environment, left_probs, right_probs, all_probs, 
+            call_depth, branch_depth, halt=False):
+        residual_left_probs, residual_right_probs = (left_probs[:, tf.shape(all_probs)[1]:], 
+            right_probs[:, tf.shape(all_probs)[1]:])
         joined_probs = tf.concat([all_probs, residual_left_probs, residual_right_probs], 1)
-        # Compute the evaluation of program left on right
-        joined_result, joined_probs = self.execute_program(left_result,
-            tf.concat([tf.expand_dims(right_result, 1), environment], 1), joined_probs, current_depth + 1)
-        padded_probs = tf.pad(all_probs, [[0, 0], [0, 
-            tf.shape(joined_probs)[1] - tf.shape(all_probs)[1]]])
-        # Merge the results according to the mask
-        next_seed = tf.where(mask, right, joined_result)
-        next_probs = tf.where(mask, padded_probs, joined_probs)
-        return next_seed, next_probs
+        joined_result, joined_probs = self.execute_program(left_result, tf.concat([tf.expand_dims(right_result, 1), 
+            environment], 1), joined_probs, call_depth + 1, branch_depth + (1 if branch_depth > 0 else 0), halt=halt)
+        padded_probs = tf.pad(all_probs, [[0, 0], [0, tf.shape(joined_probs)[1] - tf.shape(all_probs)[1]]])
+        return joined_result, joined_probs, padded_probs
+
+    def execute_program(self, seed, environment, all_probs, call_depth, branch_depth, halt=False):
+        left, right, condition, mask = self.execute_function(seed, environment)
+        if halt:
+            return right, tf.concat([all_probs, tf.expand_dims(condition, 1)], 1)
+        all_probs = tf.concat([all_probs, tf.expand_dims(tf.where(mask, condition, 1.0 - condition), 1)], 1)
+        left_result, left_probs, right_result, right_probs = self.evaluate_symbols(
+            left, right, environment, all_probs, call_depth, branch_depth, halt=(branch_depth >= self.max_branch_depth))
+        joined_result, joined_probs, padded_probs = self.apply_symbols(left_result, right_result, environment, 
+            left_probs, right_probs, all_probs, call_depth, branch_depth, halt=((call_depth >= self.max_call_depth) or (
+                (branch_depth >= self.max_branch_depth) and (self.max_branch_depth != 0))))
+        return tf.where(mask, right, joined_result), tf.where(mask, padded_probs, joined_probs)
 
     def __call__(self, seed, environment):
-        return self.execute_program(seed, environment, tf.zeros([tf.shape(seed)[0], 0]), 0)
+        return self.execute_program(seed, environment, tf.zeros([tf.shape(seed)[0], 0]), 0, 0, halt=False)
