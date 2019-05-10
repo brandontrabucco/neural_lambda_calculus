@@ -13,7 +13,7 @@ if __name__ == "__main__":
     seed = tf.random_normal([batch_size, 128])
     environment = tf.random_normal([batch_size, 4, 128])
 
-    runtime = runtime.Runtime(3, 3, 4, 32, 256, 3, 128, 257)
+    runtime = runtime.Runtime(10, 2, 4, 32, 256, 3, 128, 257)
     x = runtime(seed, environment)
 
     sess = tf.Session()
